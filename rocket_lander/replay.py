@@ -37,6 +37,7 @@ class RecordedRun:
     steps: int
     frames: List[ReplayFrame] = field(default_factory=list)
     terrain_points: List[tuple] = field(default_factory=list)
+    ghost_points: List[tuple] = field(default_factory=list)
 
 
 class RunRecorder:
@@ -78,10 +79,24 @@ class RunRecorder:
             steps=steps,
             frames=list(self.current_frames),
             terrain_points=list(self.current_terrain),
+            ghost_points=self._ghost_points(self.current_frames),
         )
 
         if self._is_better(run, self.best_run):
             self.best_run = run
+
+    def _ghost_points(self, frames: List[ReplayFrame]) -> List[tuple]:
+        """Down-sample recorded points for the ghost overlay."""
+
+        if not frames:
+            return []
+
+        pts = [(f.x, f.y) for f in frames]
+        if len(pts) <= C.GHOST_MAX_POINTS:
+            return pts
+
+        stride = max(1, len(pts) // C.GHOST_MAX_POINTS)
+        return pts[::stride][: C.GHOST_MAX_POINTS]
 
     def _stability_score(self, lander) -> float:
         """Lower is better. Combine touchdown stability with fuel left."""
