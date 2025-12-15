@@ -58,6 +58,8 @@ def run():
     trainer = Trainer(policy_net, target_net, optimizer, buffer)
 
     epsilon = C.EPSILON_START
+    episodes_since_success = 0
+    reheat_cooldown_left = 0
     best_success_streak = 0
     success_streak = 0
 
@@ -307,6 +309,30 @@ def run():
         is_ok = (lander.outcome == 1)
         is_perfect = (lander.outcome == 2)
         is_success = (is_ok and C.SAVE_ON_OK) or (is_perfect and C.SAVE_ON_PERFECT)
+
+        if reheat_cooldown_left > 0:
+            reheat_cooldown_left -= 1
+
+        if is_success:
+            episodes_since_success = 0
+        else:
+            episodes_since_success += 1
+
+        if (
+            C.ENABLE_EPS_REHEAT
+            and not is_showcase
+            and epsilon <= C.EPSILON_MIN + 1e-9
+            and episodes_since_success >= C.STALL_EPISODES
+            and reheat_cooldown_left == 0
+        ):
+            before_eps = epsilon
+            epsilon = max(epsilon, C.REHEAT_EPS)
+            episodes_since_success = 0
+            reheat_cooldown_left = C.REHEAT_COOLDOWN
+            print(
+                f"🔥 Reheat: eps {before_eps:.2f} -> {epsilon:.2f} "
+                f"(stalled {C.STALL_EPISODES} eps without success)"
+            )
 
         if is_success:
             success_streak += 1
