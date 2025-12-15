@@ -8,20 +8,21 @@ import torch.optim as optim
 
 from . import config as C
 from .agent import DQN, set_torch_stability
-from .terrain import Terrain
-from .lander import Lander
-from .replay_buffer import ReplayBuffer
-from .trainer import Trainer
 from .checkpoint import load_checkpoint, save_checkpoint
+from .effects import Effects
 from .hud import (
+    draw_action_badge,
     draw_line_chart,
     draw_outcome_chart,
     draw_q_bars,
-    draw_action_badge,
-    draw_velocity_vector,
     draw_target_vector,
+    draw_velocity_vector,
 )
-from .effects import Effects
+from .lander import Lander
+from .replay import ReplayPlayer, RunRecorder
+from .replay_buffer import ReplayBuffer
+from .terrain import Terrain
+from .trainer import Trainer
 
 
 def run():
@@ -61,11 +62,88 @@ def run():
     terrain = Terrain()
     lander = Lander()
     effects = Effects(trail_len=160)
+    recorder = RunRecorder()
+    replay_player = ReplayPlayer(C.REPLAY_SLOWMO)
+    replay_notice_timer = 0
+
+    def render_scene(action_label, q_vals, is_showcase=False, replay_mode=False, notice_time=0):
+        screen.fill((0, 0, 0))
+        terrain.draw(screen)
+        if not replay_mode:
+            effects.draw(screen)
+        lander.draw(screen)
+
+        pad_center_x = (terrain.pad_x1 + terrain.pad_x2) / 2
+        if C.SHOW_VELOCITY_VECTOR:
+            draw_velocity_vector(
+                screen,
+                (lander.x, lander.y),
+                (lander.vx, lander.vy),
+                scale=C.VECTOR_SCALE,
+                max_len=C.VECTOR_MAX_LEN,
+            )
+
+        if C.SHOW_TARGET_VECTOR:
+            draw_target_vector(
+                screen,
+                (lander.x, lander.y),
+                (pad_center_x, terrain.pad_y),
+                scale=C.VECTOR_SCALE,
+                max_len=C.VECTOR_MAX_LEN,
+            )
+
+        if not replay_mode and not lander.alive and not lander.landed:
+            warn = font.render("OUT OF BOUNDS", True, (255, 80, 80))
+            screen.blit(warn, (C.WIDTH // 2 - warn.get_width() // 2, C.HEIGHT // 2))
+
+        base_x = C.WIDTH - C.HUD_PANEL_X_OFFSET
+        draw_line_chart(screen, pygame.Rect(base_x, 40, C.HUD_PANEL_W, 80), list(speed_hist), 0, 5, "Speed", font)
+        draw_line_chart(screen, pygame.Rect(base_x, 130, C.HUD_PANEL_W, 80), list(reward_hist), -3, 3, "Reward", font)
+        draw_line_chart(screen, pygame.Rect(base_x, 220, C.HUD_PANEL_W, 80), list(fuel_hist), 0, 1, "Fuel", font)
+        draw_outcome_chart(screen, pygame.Rect(base_x, 310, C.HUD_PANEL_W, 90), list(outcome_hist), font)
+
+        if C.SHOW_ACTION_BADGE:
+            draw_action_badge(
+                screen,
+                pygame.Rect(base_x, 410, C.HUD_PANEL_W, 60),
+                action_label,
+                font,
+            )
+
+        if C.SHOW_Q_BARS:
+            draw_q_bars(
+                screen,
+                pygame.Rect(base_x, 475, C.HUD_PANEL_W, 100),
+                q_vals,
+                chosen_idx=C.ACTIONS.index(action_label) if action_label in C.ACTIONS else 0,
+                font=font,
+            )
+
+        status = f"Ep {episode}  ε {eps_for_ep:.2f}  vx {lander.vx:.2f}  vy {lander.vy:.2f}  ang {lander.angle:.2f}"
+        txt = font.render(status, True, (255, 255, 255))
+        screen.blit(txt, (10, 10))
+
+        if is_showcase:
+            badge = font.render("SHOWCASE (ε=0)", True, (255, 255, 255))
+            screen.blit(badge, (10, 32))
+            pygame.draw.rect(screen, (255, 255, 255), pygame.Rect(3, 3, C.WIDTH - 6, C.HEIGHT - 6), 2)
+
+        if replay_mode:
+            replay_badge = font.render("REPLAY (slow-mo)", True, (255, 220, 0))
+            screen.blit(replay_badge, (10, 32))
+            pygame.draw.rect(screen, (255, 220, 0), pygame.Rect(3, 3, C.WIDTH - 6, C.HEIGHT - 6), 2)
+
+        if notice_time > 0:
+            msg = font.render("No best run yet", True, (255, 120, 120))
+            screen.blit(msg, (C.WIDTH // 2 - msg.get_width() // 2, 60))
+
+        pygame.display.flip()
 
     for episode in range(C.EPISODES):
         lander.reset()
         terrain.reset()
         effects.reset_episode()
+        recorder.start_episode(terrain)
 
         speed_hist.clear()
         reward_hist.clear()
@@ -77,18 +155,36 @@ def run():
 
         steps = 0
         while lander.alive and not lander.landed:
+            clock.tick(C.FPS)
+            if replay_notice_timer > 0:
+                replay_notice_timer -= 1
+
+            for e in pygame.event.get():
+                if e.type == pygame.QUIT:
+                    pygame.quit()
+                    raise SystemExit
+                if e.type == pygame.KEYDOWN:
+                    if e.key == pygame.K_ESCAPE and replay_player.active:
+                        replay_player.stop()
+                    if e.key == pygame.K_r and C.ENABLE_REPLAY:
+                        if replay_player.active:
+                            replay_player.stop()
+                        else:
+                            started = replay_player.start(recorder.best_run)
+                            if not started:
+                                replay_notice_timer = 90
+
+            if replay_player.active:
+                replay_player.step(lander, terrain)
+                render_scene(lander.last_action, None, replay_mode=True, notice_time=replay_notice_timer)
+                continue
+
             steps += 1
             if is_showcase and steps > C.SHOWCASE_STEPS_CAP:
                 # safety cap
                 lander.alive = False
                 lander.outcome = 0
                 break
-
-            clock.tick(C.FPS)
-            for e in pygame.event.get():
-                if e.type == pygame.QUIT:
-                    pygame.quit()
-                    raise SystemExit
 
             state = lander.state()
 
@@ -127,6 +223,8 @@ def run():
             ns = lander.state()
             done = int(lander.landed or (not lander.alive))
 
+            recorder.record_step(lander, terrain, action)
+
             # train only if not showcase (keeps showcase “clean”)
             if not is_showcase:
                 buffer.push(state, a, r, ns, done)
@@ -138,72 +236,10 @@ def run():
 
             effects.update(dt=1.0)
 
-            # render
-            screen.fill((0, 0, 0))
-            terrain.draw(screen)
-            effects.draw(screen)
-            lander.draw(screen)
-
-            if C.SHOW_VELOCITY_VECTOR:
-                draw_velocity_vector(
-                    screen,
-                    (lander.x, lander.y),
-                    (lander.vx, lander.vy),
-                    scale=C.VECTOR_SCALE,
-                    max_len=C.VECTOR_MAX_LEN,
-                )
-
-            if C.SHOW_TARGET_VECTOR:
-                draw_target_vector(
-                    screen,
-                    (lander.x, lander.y),
-                    (pad_center_x, terrain.pad_y),
-                    scale=C.VECTOR_SCALE,
-                    max_len=C.VECTOR_MAX_LEN,
-                )
-
-            if not lander.alive and not lander.landed:
-                warn = font.render("OUT OF BOUNDS", True, (255, 80, 80))
-                screen.blit(warn, (C.WIDTH // 2 - warn.get_width() // 2, C.HEIGHT // 2))
-
-            base_x = C.WIDTH - C.HUD_PANEL_X_OFFSET
-            draw_line_chart(screen, pygame.Rect(base_x, 40, C.HUD_PANEL_W, 80), list(speed_hist), 0, 5, "Speed", font)
-            draw_line_chart(screen, pygame.Rect(base_x, 130, C.HUD_PANEL_W, 80), list(reward_hist), -3, 3, "Reward", font)
-            draw_line_chart(screen, pygame.Rect(base_x, 220, C.HUD_PANEL_W, 80), list(fuel_hist), 0, 1, "Fuel", font)
-            draw_outcome_chart(screen, pygame.Rect(base_x, 310, C.HUD_PANEL_W, 90), list(outcome_hist), font)
-
-            # fun HUD extras
-            if C.SHOW_ACTION_BADGE:
-                draw_action_badge(
-                    screen,
-                    pygame.Rect(base_x, 410, C.HUD_PANEL_W, 60),
-                    action,
-                    font,
-                )
-
-            if C.SHOW_Q_BARS:
-                draw_q_bars(
-                    screen,
-                    pygame.Rect(base_x, 475, C.HUD_PANEL_W, 100),
-                    q_vals,
-                    chosen_idx=a,
-                    font=font,
-                )
-
-            # status + showcase banner
-            status = f"Ep {episode}  ε {eps_for_ep:.2f}  vx {lander.vx:.2f}  vy {lander.vy:.2f}  ang {lander.angle:.2f}"
-            txt = font.render(status, True, (255, 255, 255))
-            screen.blit(txt, (10, 10))
-
-            if is_showcase:
-                badge = font.render("SHOWCASE (ε=0)", True, (255, 255, 255))
-                screen.blit(badge, (10, 32))
-                # gold-ish border
-                pygame.draw.rect(screen, (255, 255, 255), pygame.Rect(3, 3, C.WIDTH - 6, C.HEIGHT - 6), 2)
-
-            pygame.display.flip()
+            render_scene(action, q_vals, is_showcase=is_showcase, notice_time=replay_notice_timer)
 
         # episode end
+        recorder.end_episode(lander, steps)
         outcome_hist.append(lander.outcome)
 
         # epsilon decay + target sync (skip for showcase)
