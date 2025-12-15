@@ -238,7 +238,7 @@ def run():
                 lander.outcome = 0
                 break
 
-            state = lander.state()
+            state = lander.state(terrain)
 
             # ε-greedy (or deterministic in showcase)
             if random.random() < eps_for_ep:
@@ -265,14 +265,9 @@ def run():
                 elif action == "RIGHT":
                     effects.emit_side(lander.x + 10, lander.y, side=+1, base_vx=lander.vx, base_vy=lander.vy)
 
-            r = lander.reward()
+            r = lander.reward(terrain)
 
-            # pad proximity shaping
-            pad_center_x = (terrain.pad_x1 + terrain.pad_x2) / 2
-            dist_to_pad = abs(lander.x - pad_center_x) / (C.WIDTH / 2)
-            r += 0.25 * (1 - min(1.0, dist_to_pad))
-
-            ns = lander.state()
+            ns = lander.state(terrain)
             done = int(lander.landed or (not lander.alive))
 
             recorder.record_step(lander, terrain, action)
