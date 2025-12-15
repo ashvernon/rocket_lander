@@ -34,8 +34,17 @@ class Lander:
         self.landed = False
         self.outcome = 0  # 0 fail, 1 ok, 2 perfect
         self.last_action = "NONE"
+        self.fail_reason = None
 
-    def state(self) -> np.ndarray:
+    def _pad_features(self, terrain: Terrain):
+        pad_center = (terrain.pad_x1 + terrain.pad_x2) / 2
+        dx_to_pad_center = (pad_center - self.x) / (C.WIDTH / 2)
+        dy_to_pad = (terrain.pad_y - self.y) / C.HEIGHT
+        pad_half_width = (terrain.pad_x2 - terrain.pad_x1) / (2 * C.WIDTH)
+        return dx_to_pad_center, dy_to_pad, pad_half_width
+
+    def state(self, terrain: Terrain) -> np.ndarray:
+        dx_to_pad_center, dy_to_pad, pad_half_width = self._pad_features(terrain)
         return np.array(
             [
                 self.x / C.WIDTH,
@@ -44,6 +53,9 @@ class Lander:
                 self.vy / 5,
                 self.angle / math.pi,
                 self.angular_v,
+                dx_to_pad_center,
+                dy_to_pad,
+                pad_half_width,
             ],
             dtype=np.float32,
         )
@@ -76,6 +88,7 @@ class Lander:
         ):
             self.alive = False
             self.outcome = 0
+            self.fail_reason = "OOB"
             return
 
         ground_y = terrain.height_at(self.x)
@@ -94,21 +107,36 @@ class Lander:
                 else:
                     self.alive = False
                     self.outcome = 0
+                    self.fail_reason = "HARD_PAD"
             else:
                 self.alive = False
                 self.outcome = 0
+                self.fail_reason = "MISS_PAD"
 
-    def reward(self) -> float:
+    def reward(self, terrain: Terrain) -> float:
+        dx_to_pad_center, _, _ = self._pad_features(terrain)
+
         if not self.alive:
-            return C.OUT_OF_BOUNDS_PENALTY
+            if self.fail_reason == "OOB":
+                return C.OUT_OF_BOUNDS_PENALTY
+            if self.fail_reason == "HARD_PAD":
+                return C.HARD_LANDING_PENALTY
+            if self.fail_reason == "MISS_PAD":
+                return C.MISS_PAD_PENALTY
+            return C.GROUND_CRASH_PENALTY
+
         if self.landed:
             return 200.0 if self.outcome == 2 else 150.0
 
-        return (
+        dist_to_pad = min(1.0, abs(dx_to_pad_center))
+        reward = (
             -abs(self.vy) * 0.5
             -abs(self.vx) * 0.2
             -abs(self.angle) * 0.2
+            -C.STEP_PENALTY
         )
+        reward += C.PAD_SHAPING * (1 - dist_to_pad)
+        return reward
 
     def draw(self, screen):
         rocket = [(0, -14), (8, 10), (4, 12), (-4, 12), (-8, 10)]

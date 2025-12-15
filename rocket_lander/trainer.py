@@ -14,18 +14,19 @@ from . import config as C
 
 
 class Trainer:
-    def __init__(self, policy_net, target_net, optimizer, replay_buffer):
+    def __init__(self, policy_net, target_net, optimizer, replay_buffer, device=None):
         self.policy_net = policy_net
         self.target_net = target_net
         self.optimizer = optimizer
         self.buffer = replay_buffer
         self.loss_fn = nn.MSELoss()
+        self.device = device or torch.device("cpu")
 
     def train_step(self):
         if len(self.buffer) < C.BATCH_SIZE:
             return None
 
-        s, a, r, ns, d = self.buffer.sample(C.BATCH_SIZE)
+        s, a, r, ns, d = self.buffer.sample(C.BATCH_SIZE, device=self.device)
 
         q = self.policy_net(s).gather(1, a).squeeze(1)
 

@@ -22,10 +22,16 @@ from rocket_lander.terrain import Terrain
 from rocket_lander.trainer import Trainer
 
 
-def init_system() -> Tuple[DQN, DQN, optim.Optimizer, float, int]:
+def resolve_device(device_arg: str) -> torch.device:
+    if device_arg == "auto":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return torch.device(device_arg)
+
+
+def init_system(device: torch.device, compile_model: bool = False) -> Tuple[DQN, DQN, optim.Optimizer, float, int]:
     """Initialize networks, optimizer, and load any saved checkpoint."""
-    policy_net = DQN()
-    target_net = DQN()
+    policy_net = DQN().to(device)
+    target_net = DQN().to(device)
     target_net.load_state_dict(policy_net.state_dict())
     optimizer = optim.Adam(policy_net.parameters(), lr=C.LR)
 
@@ -44,20 +50,32 @@ def init_system() -> Tuple[DQN, DQN, optim.Optimizer, float, int]:
         if note:
             print(f"  note: {note}")
 
+    if compile_model and hasattr(torch, "compile"):
+        try:
+            policy_net = torch.compile(policy_net)
+            target_net.load_state_dict(policy_net.state_dict())
+            print("Using torch.compile for policy_net")
+        except Exception as ex:  # pragma: no cover - compile not always available
+            print(f"⚠️ torch.compile failed, continuing without it: {ex}")
+    elif compile_model:
+        print("⚠️ torch.compile requested but not available on this torch build")
+
     return policy_net, target_net, optimizer, epsilon, best_success_streak
 
 
 def train_headless(policy_net: DQN, target_net: DQN, optimizer: optim.Optimizer,
                    epsilon: float, best_success_streak: int,
-                   episodes: int, target_sync_every: int) -> Tuple[DQN, float, int]:
+                   episodes: int, target_sync_every: int,
+                   device: torch.device, log_every: int) -> Tuple[DQN, float, int]:
     """Run a headless training loop using the same physics/rewards as game_loop."""
     buffer = ReplayBuffer(C.MEMORY_SIZE)
-    trainer = Trainer(policy_net, target_net, optimizer, buffer)
+    trainer = Trainer(policy_net, target_net, optimizer, buffer, device=device)
 
     terrain = Terrain()
     lander = Lander()
 
     success_streak = 0
+    state_tensor = torch.empty(C.STATE_SIZE, device=device)
 
     for episode in range(episodes):
         lander.reset()
@@ -67,24 +85,22 @@ def train_headless(policy_net: DQN, target_net: DQN, optimizer: optim.Optimizer,
         steps = 0
 
         while lander.alive and not lander.landed:
-            state = lander.state()
+            state = lander.state(terrain)
 
             if random.random() < epsilon:
                 action_idx = random.randrange(C.ACTION_SIZE)
             else:
-                with torch.no_grad():
-                    qs = policy_net(torch.from_numpy(state))
+                state_tensor.copy_(torch.from_numpy(state), non_blocking=True)
+                with torch.inference_mode():
+                    qs = policy_net(state_tensor)
                     action_idx = int(qs.argmax().item())
 
             action = C.ACTIONS[action_idx]
             lander.step(action, terrain)
 
-            reward = lander.reward()
-            pad_center_x = (terrain.pad_x1 + terrain.pad_x2) / 2
-            dist_to_pad = abs(lander.x - pad_center_x) / (C.WIDTH / 2)
-            reward += 0.25 * (1 - min(1.0, dist_to_pad))
+            reward = lander.reward(terrain)
 
-            next_state = lander.state()
+            next_state = lander.state(terrain)
             done = int(lander.landed or (not lander.alive))
 
             buffer.push(state, action_idx, reward, next_state, done)
@@ -126,15 +142,16 @@ def train_headless(policy_net: DQN, target_net: DQN, optimizer: optim.Optimizer,
             except Exception as ex:
                 print(f"⚠️ Failed to save checkpoint to {C.MODEL_PATH}: {ex}")
 
-        print(
-            f"Ep {episode+1:04d}/{episodes} | steps={steps:<4d} | "
-            f"reward={total_reward:7.2f} | eps={epsilon:.3f} | outcome={lander.outcome}"
-        )
+        if (episode + 1) % log_every == 0 or (episode + 1) == episodes:
+            print(
+                f"Ep {episode+1:04d}/{episodes} | steps={steps:<4d} | "
+                f"reward={total_reward:7.2f} | eps={epsilon:.3f} | outcome={lander.outcome}"
+            )
 
     return policy_net, epsilon, best_success_streak
 
 
-def visualize_policy(policy_net: DQN, episodes: int, fps: int) -> None:
+def visualize_policy(policy_net: DQN, episodes: int, fps: int, device: torch.device) -> None:
     """Run one or more purely-inference episodes with rendering enabled."""
     import pygame
 
@@ -143,6 +160,7 @@ def visualize_policy(policy_net: DQN, episodes: int, fps: int) -> None:
     clock = pygame.time.Clock()
 
     policy_net.eval()
+    state_tensor = torch.empty(C.STATE_SIZE, device=device)
 
     terrain = Terrain()
     lander = Lander()
@@ -159,9 +177,9 @@ def visualize_policy(policy_net: DQN, episodes: int, fps: int) -> None:
                     running = False
                     break
 
-            with torch.no_grad():
-                state = lander.state()
-                action_idx = int(policy_net(torch.from_numpy(state)).argmax().item())
+            with torch.inference_mode():
+                state_tensor.copy_(torch.from_numpy(lander.state(terrain)), non_blocking=True)
+                action_idx = int(policy_net(state_tensor).argmax().item())
             lander.step(C.ACTIONS[action_idx], terrain)
 
             screen.fill((0, 0, 0))
@@ -187,11 +205,14 @@ def main():
     parser.add_argument("--visualize-episodes", type=int, default=1, dest="visualize_episodes", help="Number of visualization episodes to run")
     parser.add_argument("--fps", type=int, default=C.FPS, help="FPS cap during visualization")
     parser.add_argument("--skip-train", action="store_true", help="Skip training and just visualize the latest checkpoint")
+    parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"], help="Device to run policy/training on")
+    parser.add_argument("--compile", action="store_true", help="Enable torch.compile for the policy network (if available)")
+    parser.add_argument("--log-every", type=int, default=1, dest="log_every", help="Print metrics every N episodes")
     args = parser.parse_args()
 
     set_torch_stability()
-
-    policy_net, target_net, optimizer, epsilon, best_success_streak = init_system()
+    device = resolve_device(args.device)
+    policy_net, target_net, optimizer, epsilon, best_success_streak = init_system(device, compile_model=args.compile)
 
     if not args.skip_train:
         policy_net.train()
@@ -203,12 +224,14 @@ def main():
             best_success_streak,
             episodes=args.episodes,
             target_sync_every=args.target_sync,
+            device=device,
+            log_every=args.log_every,
         )
     else:
         print("Skipping training; using weights from the loaded checkpoint.")
 
     if args.visualize:
-        visualize_policy(policy_net, episodes=args.visualize_episodes, fps=args.fps)
+        visualize_policy(policy_net, episodes=args.visualize_episodes, fps=args.fps, device=device)
     else:
         print("Visualization skipped. Use --visualize to watch the policy fly.")
 
