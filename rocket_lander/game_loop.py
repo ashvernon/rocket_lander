@@ -24,6 +24,7 @@ from .hud import (
 from .lander import Lander
 from .replay import ReplayPlayer, RunRecorder
 from .replay_buffer import ReplayBuffer
+from .starfield import Starfield
 from .terrain import Terrain
 from .trainer import Trainer
 
@@ -37,6 +38,16 @@ def run():
     font = pygame.font.SysFont(None, 22)
     world_surf = pygame.Surface((C.WIDTH, C.HEIGHT))
     panel_surf = pygame.Surface((C.PANEL_WIDTH, C.HEIGHT))
+    starfield = Starfield(
+        width=C.WIDTH,
+        height=C.HEIGHT,
+        count=C.STAR_COUNT,
+        layers=C.STAR_LAYERS,
+        size_range=C.STAR_SIZES,
+        parallax=C.STAR_PARALLAX,
+        parallax_scale=C.STAR_PARALLAX_SCALE,
+        reseed_each_episode=C.STAR_RESEED_EACH_EPISODE,
+    )
 
     policy_net = DQN()
     target_net = DQN()
@@ -73,6 +84,8 @@ def run():
 
     def render_scene(action_label, q_vals, is_showcase=False, replay_mode=False, notice_time=0, step_idx=0):
         world_surf.fill((0, 0, 0))
+        if C.SHOW_STARFIELD:
+            starfield.draw(world_surf, vx=lander.vx, vy=lander.vy)
         panel_surf.fill((8, 8, 8))
 
         terrain.draw(world_surf)
@@ -179,6 +192,8 @@ def run():
         terrain.reset()
         effects.reset_episode()
         recorder.start_episode(terrain)
+        if C.SHOW_STARFIELD:
+            starfield.reset_episode()
 
         speed_hist.clear()
         reward_hist.clear()
