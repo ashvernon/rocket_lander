@@ -10,6 +10,7 @@ Responsibilities:
 - Landing funnel overlay
 - Badge / streak visuals
 """
+import math
 import pygame
 
 
@@ -130,4 +131,54 @@ def draw_q_bars(screen, rect, q_values, chosen_idx, font):
 
         qtxt = font.render(f"{q:+.2f}", True, (200, 200, 200))
         screen.blit(qtxt, (rect.right - qtxt.get_width() - 6, y + 2))
+
+
+def _scaled_vector(vec, scale, max_len):
+    vx, vy = vec
+    mag = math.hypot(vx, vy)
+    if mag < 1e-5:
+        return None
+
+    length = min(mag * scale, max_len)
+    ux, uy = vx / mag, vy / mag
+    return ux * length, uy * length
+
+
+def _draw_arrow(screen, start, vec, color=(255, 255, 255), width=2):
+    sx, sy = vec
+    mag = math.hypot(sx, sy)
+    if mag < 1e-5:
+        return
+
+    end = (start[0] + sx, start[1] + sy)
+    pygame.draw.line(screen, color, start, end, width)
+
+    ux, uy = sx / mag, sy / mag
+    head_len = 12
+    head_w = 8
+    base_x = end[0] - ux * head_len
+    base_y = end[1] - uy * head_len
+    perp_x, perp_y = -uy, ux
+    left = (base_x + perp_x * head_w / 2, base_y + perp_y * head_w / 2)
+    right = (base_x - perp_x * head_w / 2, base_y - perp_y * head_w / 2)
+
+    pygame.draw.polygon(screen, color, [end, left, right])
+
+
+def draw_velocity_vector(screen, position, velocity, scale, max_len):
+    scaled = _scaled_vector(velocity, scale, max_len)
+    if scaled is None:
+        return
+
+    _draw_arrow(screen, position, scaled, color=(0, 200, 255), width=3)
+
+
+def draw_target_vector(screen, position, target, scale, max_len):
+    dx = target[0] - position[0]
+    dy = target[1] - position[1]
+    scaled = _scaled_vector((dx, dy), scale, max_len)
+    if scaled is None:
+        return
+
+    _draw_arrow(screen, position, scaled, color=(120, 255, 120), width=3)
 
