@@ -13,7 +13,14 @@ from .lander import Lander
 from .replay_buffer import ReplayBuffer
 from .trainer import Trainer
 from .checkpoint import load_checkpoint, save_checkpoint
-from .hud import draw_line_chart, draw_outcome_chart, draw_q_bars, draw_action_badge
+from .hud import (
+    draw_line_chart,
+    draw_outcome_chart,
+    draw_q_bars,
+    draw_action_badge,
+    draw_velocity_vector,
+    draw_target_vector,
+)
 from .effects import Effects
 
 
@@ -113,8 +120,8 @@ def run():
             r = lander.reward()
 
             # pad proximity shaping
-            pad_center = (terrain.pad_x1 + terrain.pad_x2) / 2
-            dist_to_pad = abs(lander.x - pad_center) / (C.WIDTH / 2)
+            pad_center_x = (terrain.pad_x1 + terrain.pad_x2) / 2
+            dist_to_pad = abs(lander.x - pad_center_x) / (C.WIDTH / 2)
             r += 0.25 * (1 - min(1.0, dist_to_pad))
 
             ns = lander.state()
@@ -136,6 +143,24 @@ def run():
             terrain.draw(screen)
             effects.draw(screen)
             lander.draw(screen)
+
+            if C.SHOW_VELOCITY_VECTOR:
+                draw_velocity_vector(
+                    screen,
+                    (lander.x, lander.y),
+                    (lander.vx, lander.vy),
+                    scale=C.VECTOR_SCALE,
+                    max_len=C.VECTOR_MAX_LEN,
+                )
+
+            if C.SHOW_TARGET_VECTOR:
+                draw_target_vector(
+                    screen,
+                    (lander.x, lander.y),
+                    (pad_center_x, terrain.pad_y),
+                    scale=C.VECTOR_SCALE,
+                    max_len=C.VECTOR_MAX_LEN,
+                )
 
             if not lander.alive and not lander.landed:
                 warn = font.render("OUT OF BOUNDS", True, (255, 80, 80))
