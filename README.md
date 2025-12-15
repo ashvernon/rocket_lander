@@ -12,6 +12,18 @@ Focus: watchable learning (Q-values, intent vectors, replays, curriculum), **no 
 - `outputs/` checkpoints + run exports
 - `tests/` future test suite
 
+## Headless training + visualization
+
+Run training without Pygame rendering via `headless_train.py`, then optionally spin up a short visualization of the trained policy:
+
+```
+# Train for the configured number of episodes (headless)
+python headless_train.py --episodes 500
+
+# Skip training and visualize the latest checkpoint for 3 episodes
+python headless_train.py --skip-train --visualize --visualize-episodes 3
+```
+
 ## Next steps
 
 1. Move your current single-file lander into:
