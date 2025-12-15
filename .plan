@@ -1,0 +1,184 @@
+# Rocket Lander RL Visual Lab — Implementation Plan (.plan)
+
+Goal
+- Make the Rocket Lander RL sim fun and engaging to watch while it learns.
+- Add interpretability overlays + “TV moments” (replays/ghost) + curriculum progression.
+- No sound.
+
+Non-goals
+- No audio.
+- No major RL algorithm changes beyond what is needed for stability/UI (keep DQN baseline intact).
+- No external dependencies beyond pygame/numpy/torch.
+
+Repo assumptions
+- Entry: main.py -> rocket_lander/game_loop.py::run()
+- Modules exist: config.py, hud.py, effects.py, terrain.py, lander.py, replay.py, replay_buffer.py, trainer.py, metrics.py, curriculum.py
+- Training can run headless? Not required; primary is on-screen.
+
+Work breakdown
+- Implement features in independent PRs:
+  1) Vector overlays (velocity + pad target)
+  2) Landing funnel overlay
+  3) Best-run recorder + slow-mo replay
+  4) Ghost trajectory overlay (best run)
+  5) Curriculum levels + level-up banner
+
+Branching / PR policy
+- One PR per feature.
+- No unrelated refactors.
+- Keep toggles in config.py for every major visual feature.
+- Ensure each PR runs end-to-end via `python main.py`.
+
+Shared conventions
+- All draw helpers live in rocket_lander/hud.py unless they involve persistent state (then use a class in effects.py or replay.py).
+- Avoid alpha surfaces unless necessary; prefer line thickness, brightness, outlines.
+- Keep rendering deterministic and cheap (no per-pixel work).
+- Add keybindings only when needed; document them in README.
+- Do not commit model checkpoints (*.pt). Must remain ignored.
+
+Instrumentation & safety
+- Add conservative clamps so overlays never crash:
+  - handle empty best-run
+  - clamp vector lengths
+  - replay safety cap for frame count
+- Keep training stable:
+  - do not train during replay/showcase
+  - keep epsilon logic unchanged except for showcase episodes
+
+PR 1 — Velocity arrow + pad-target arrow
+Scope
+- Add overlay arrows:
+  - velocity vector from rocket position
+  - target vector from rocket to pad center
+Files
+- rocket_lander/config.py:
+  - SHOW_VELOCITY_VECTOR=True
+  - SHOW_TARGET_VECTOR=True
+  - VECTOR_SCALE=35
+  - VECTOR_MAX_LEN=90
+- rocket_lander/hud.py:
+  - draw_arrow(screen, start, vec, clamp_len, label=None)
+  - draw_vectors_overlay(screen, lander, terrain, font)
+- rocket_lander/game_loop.py:
+  - compute pad center, call overlay draw each frame
+Acceptance checks
+- Arrow directions match vx/vy and pad direction.
+- Toggle disables each overlay cleanly.
+- No FPS collapse.
+
+PR 2 — Landing funnel overlay
+Scope
+- Add “safe corridor funnel” above pad.
+- Optional threshold readout: |vx| |vy| |angle| vs OK/PERFECT.
+Files
+- rocket_lander/config.py:
+  - SHOW_LANDING_FUNNEL=True
+  - FUNNEL_HEIGHT=220
+  - FUNNEL_TOP_EXTRA_WIDTH=260
+  - SHOW_THRESHOLD_READOUT=True
+- rocket_lander/hud.py:
+  - draw_landing_funnel(screen, terrain, config)
+  - draw_threshold_readout(screen, lander, font)
+- rocket_lander/game_loop.py:
+  - call funnel + readout draw before HUD panels
+Acceptance checks
+- Funnel aligns to pad across many terrain resets.
+- Readout updates per frame, no jitter/crash.
+- Toggle works.
+
+PR 3 — Best-run recorder + slow-mo replay
+Scope
+- Record episode trajectories and keep best run.
+- Add replay mode with slow-mo playback and banner.
+- Keybinds:
+  - R toggles replay on/off
+  - ESC exits replay
+Files
+- rocket_lander/replay.py:
+  - RunFrame dataclass (x,y,vx,vy,angle,angular_v,fuel,action,pad_x1,pad_x2,pad_y)
+  - RunRecorder: start_episode(), record_step(), finalize(outcome, score), best_run property
+  - ReplayPlayer: start(best_run), update(), draw_banner()
+- rocket_lander/config.py:
+  - REPLAY_SLOWMO=4
+  - REPLAY_MAX_FRAMES=6000
+  - SHOW_REPLAY_BANNER=True
+- rocket_lander/game_loop.py:
+  - integrate recorder in training loop
+  - maintain mode state: TRAIN vs REPLAY
+  - when REPLAY: disable training updates + epsilon changes
+Acceptance checks
+- Replay plays the same path as recorded (rocket + terrain + pad).
+- Works even if no best run yet (shows “No best run yet”).
+- No training during replay.
+- Replay exits cleanly to training.
+
+PR 4 — Ghost trajectory overlay
+Scope
+- Draw best-run path as a “ghost” during normal training.
+- Optional: ghost rocket at current frame index (cheap).
+Files
+- rocket_lander/config.py:
+  - SHOW_GHOST=True
+  - GHOST_MAX_POINTS=500
+  - SHOW_GHOST_ROCKET=False (default off)
+- rocket_lander/hud.py (or effects.py):
+  - draw_ghost_path(screen, points)
+  - optional draw_ghost_rocket(screen, frame)
+- rocket_lander/game_loop.py:
+  - if recorder.best_run exists, draw ghost before current rocket
+Acceptance checks
+- Ghost appears after first successful best-run capture.
+- Toggle disables ghost.
+- No slowdown.
+
+PR 5 — Curriculum levels + level-up banner
+Scope
+- Add difficulty levels driven by recent success rate.
+- Adjust:
+  - pad width range
+  - spawn distance from pad center
+  - initial vx range
+  - terrain ruggedness
+- Show level indicator + “LEVEL UP” banner.
+Files
+- rocket_lander/curriculum.py:
+  - CurriculumManager:
+    - level (int)
+    - params_for_level(level) -> dict
+    - update(outcome) using rolling window (K=30)
+    - returns event: level_up/level_down
+- rocket_lander/terrain.py:
+  - reset() accepts params: pad_width_range, ruggedness
+- rocket_lander/lander.py:
+  - reset() accepts spawn params: spawn_x_range, init_vx_range
+- rocket_lander/config.py:
+  - USE_CURRICULUM=True
+  - CURRIC_WINDOW=30
+  - CURRIC_UP_RATE=0.60
+  - CURRIC_DOWN_RATE=0.15 (optional)
+  - LEVEL_BANNER_FRAMES=120
+- rocket_lander/game_loop.py:
+  - on episode start: get params from curriculum and pass into terrain.reset / lander.reset
+  - on episode end: curriculum.update(outcome) and show banner if changed
+Acceptance checks
+- Level increases with sustained success.
+- Difficulty visibly changes (pad narrows, start farther, rougher terrain).
+- Disabling curriculum returns to fully random baseline.
+
+Docs updates (after all PRs)
+- README.md:
+  - Controls: R (replay), ESC (exit replay), window close to quit
+  - Feature toggles in config.py
+  - Screenshot/GIF placeholders
+
+Quality gates per PR
+- `python main.py` runs without exceptions.
+- No model checkpoint is committed.
+- `git status` clean after run (except local .pt which must be ignored).
+- Keep PR diff focused to the feature.
+
+End state
+- Learning is watchable:
+  - vectors + funnel make intent clear
+  - replay/ghost provide “story arc”
+  - curriculum provides progression & level-ups
