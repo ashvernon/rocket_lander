@@ -8,7 +8,8 @@ learned policy.
 import argparse
 import math
 import random
-from typing import Tuple
+import time
+from typing import Optional, Tuple
 
 import torch
 import torch.optim as optim
@@ -17,6 +18,7 @@ from rocket_lander import config as C
 from rocket_lander.agent import DQN, set_torch_stability
 from rocket_lander.checkpoint import load_checkpoint, save_checkpoint
 from rocket_lander.lander import Lander
+from rocket_lander.metrics import RunMetrics
 from rocket_lander.replay_buffer import ReplayBuffer
 from rocket_lander.terrain import Terrain
 from rocket_lander.trainer import Trainer
@@ -66,7 +68,8 @@ def init_system(device: torch.device, compile_model: bool = False) -> Tuple[DQN,
 def train_headless(policy_net: DQN, target_net: DQN, optimizer: optim.Optimizer,
                    epsilon: float, best_success_streak: int,
                    episodes: int, target_sync_every: int,
-                   device: torch.device, log_every: int) -> Tuple[DQN, float, int]:
+                   device: torch.device, log_every: int,
+                   metrics: Optional[RunMetrics] = None) -> Tuple[DQN, float, int]:
     """Run a headless training loop using the same physics/rewards as game_loop."""
     buffer = ReplayBuffer(C.MEMORY_SIZE)
     trainer = Trainer(policy_net, target_net, optimizer, buffer, device=device)
@@ -74,10 +77,12 @@ def train_headless(policy_net: DQN, target_net: DQN, optimizer: optim.Optimizer,
     terrain = Terrain()
     lander = Lander()
 
+    metrics = metrics or RunMetrics(run_tag=C.RUN_TAG)
     success_streak = 0
     state_tensor = torch.empty(C.STATE_SIZE, device=device)
 
     for episode in range(episodes):
+        episode_start = time.perf_counter()
         lander.reset()
         terrain.reset()
 
@@ -142,10 +147,22 @@ def train_headless(policy_net: DQN, target_net: DQN, optimizer: optim.Optimizer,
             except Exception as ex:
                 print(f"⚠️ Failed to save checkpoint to {C.MODEL_PATH}: {ex}")
 
+        wall_time = time.perf_counter() - episode_start
+        metrics.record_episode(
+            episode=episode + 1,
+            lander=lander,
+            terrain=terrain,
+            total_reward=total_reward,
+            steps=steps,
+            epsilon=epsilon,
+            wall_time_sec_episode=wall_time,
+        )
+
         if (episode + 1) % log_every == 0 or (episode + 1) == episodes:
             print(
                 f"Ep {episode+1:04d}/{episodes} | steps={steps:<4d} | "
-                f"reward={total_reward:7.2f} | eps={epsilon:.3f} | outcome={lander.outcome}"
+                f"reward={total_reward:7.2f} | eps={epsilon:.3f} | outcome={lander.outcome} "
+                f"| stability={metrics.records[-1].stability_score:5.1f}"
             )
 
     return policy_net, epsilon, best_success_streak
@@ -214,19 +231,37 @@ def main():
     device = resolve_device(args.device)
     policy_net, target_net, optimizer, epsilon, best_success_streak = init_system(device, compile_model=args.compile)
 
+    metrics: Optional[RunMetrics] = None
+
     if not args.skip_train:
+        metrics = RunMetrics(run_tag=C.RUN_TAG)
         policy_net.train()
-        policy_net, epsilon, best_success_streak = train_headless(
-            policy_net,
-            target_net,
-            optimizer,
-            epsilon,
-            best_success_streak,
-            episodes=args.episodes,
-            target_sync_every=args.target_sync,
-            device=device,
-            log_every=args.log_every,
-        )
+        interrupted = False
+        try:
+            policy_net, epsilon, best_success_streak = train_headless(
+                policy_net,
+                target_net,
+                optimizer,
+                epsilon,
+                best_success_streak,
+                episodes=args.episodes,
+                target_sync_every=args.target_sync,
+                device=device,
+                log_every=args.log_every,
+                metrics=metrics,
+            )
+        except KeyboardInterrupt:
+            interrupted = True
+            print("Training interrupted by user; exporting metrics...")
+        finally:
+            metrics.finalize_and_export(
+                out_dir=C.REPORTS_DIR,
+                export_csv=C.EXPORT_CSV,
+                export_json=C.EXPORT_JSON,
+            )
+
+        if interrupted:
+            return
     else:
         print("Skipping training; using weights from the loaded checkpoint.")
 

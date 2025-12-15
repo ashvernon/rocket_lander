@@ -62,6 +62,12 @@ SAVE_ON_OK = True
 SAVE_ON_PERFECT = True
 MIN_SUCCESSES_TO_SAVE = 3
 
+# Reporting
+REPORTS_DIR = Path("reports")
+EXPORT_CSV = True
+EXPORT_JSON = True
+RUN_TAG = ""
+
 # HUD
 HUD_N = 240
 EP_N = 100
