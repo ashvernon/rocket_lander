@@ -182,3 +182,39 @@ def draw_target_vector(screen, position, target, scale, max_len):
 
     _draw_arrow(screen, position, scaled, color=(120, 255, 120), width=3)
 
+
+def draw_ghost_path(screen, points):
+    """Draw the best-run path as a faint polyline."""
+
+    if not points or len(points) < 2:
+        return
+
+    surface = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
+    color = (150, 200, 255, 120)
+    for i in range(1, len(points)):
+        pygame.draw.line(surface, color, points[i - 1], points[i], 2)
+
+    screen.blit(surface, (0, 0))
+
+
+def draw_ghost_rocket(screen, frame):
+    """Draw a simple translucent rocket at the ghost frame's position."""
+
+    if frame is None:
+        return
+
+    surface = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
+    body = [(0, -12), (7, 9), (3, 11), (-3, 11), (-7, 9)]
+
+    ca, sa = math.cos(frame.angle), math.sin(frame.angle)
+
+    def rotate(pt):
+        x, y = pt
+        return (x * ca - y * sa, x * sa + y * ca)
+
+    pts = [(frame.x + rx, frame.y + ry) for rx, ry in map(rotate, body)]
+    pygame.draw.polygon(surface, (180, 220, 255, 160), pts)
+    pygame.draw.polygon(surface, (80, 120, 160, 200), pts, 1)
+
+    screen.blit(surface, (0, 0))
+

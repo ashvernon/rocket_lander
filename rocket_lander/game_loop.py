@@ -12,6 +12,8 @@ from .checkpoint import load_checkpoint, save_checkpoint
 from .effects import Effects
 from .hud import (
     draw_action_badge,
+    draw_ghost_path,
+    draw_ghost_rocket,
     draw_line_chart,
     draw_outcome_chart,
     draw_q_bars,
@@ -66,9 +68,27 @@ def run():
     replay_player = ReplayPlayer(C.REPLAY_SLOWMO)
     replay_notice_timer = 0
 
-    def render_scene(action_label, q_vals, is_showcase=False, replay_mode=False, notice_time=0):
+    def render_scene(action_label, q_vals, is_showcase=False, replay_mode=False, notice_time=0, step_idx=0):
         screen.fill((0, 0, 0))
         terrain.draw(screen)
+
+        ghost_run = None
+        if not replay_mode and C.SHOW_GHOST:
+            ghost_run = recorder.best_run
+
+        if ghost_run:
+            if not ghost_run.ghost_points and ghost_run.frames:
+                stride = max(1, len(ghost_run.frames) // C.GHOST_MAX_POINTS)
+                ghost_run.ghost_points = [
+                    (f.x, f.y) for f in ghost_run.frames[::stride][: C.GHOST_MAX_POINTS]
+                ]
+
+            if ghost_run.ghost_points:
+                draw_ghost_path(screen, ghost_run.ghost_points)
+                if C.SHOW_GHOST_ROCKET:
+                    idx = max(0, min(len(ghost_run.frames) - 1, step_idx))
+                    draw_ghost_rocket(screen, ghost_run.frames[idx])
+
         if not replay_mode:
             effects.draw(screen)
         lander.draw(screen)
@@ -236,7 +256,13 @@ def run():
 
             effects.update(dt=1.0)
 
-            render_scene(action, q_vals, is_showcase=is_showcase, notice_time=replay_notice_timer)
+            render_scene(
+                action,
+                q_vals,
+                is_showcase=is_showcase,
+                notice_time=replay_notice_timer,
+                step_idx=max(0, steps - 1),
+            )
 
         # episode end
         recorder.end_episode(lander, steps)
