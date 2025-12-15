@@ -68,6 +68,9 @@ class Terrain:
         return self.pad_x1 <= x <= self.pad_x2
 
     def draw(self, screen):
+        ground_points = [(0, C.HEIGHT), *self.points, (C.WIDTH, C.HEIGHT)]
+
+        pygame.draw.polygon(screen, (10, 10, 10), ground_points)
         pygame.draw.lines(screen, (120, 120, 120), False, self.points, 3)
         pygame.draw.line(
             screen,
