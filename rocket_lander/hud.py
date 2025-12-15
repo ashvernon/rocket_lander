@@ -13,6 +13,16 @@ Responsibilities:
 import math
 import pygame
 
+from . import config as C
+
+
+def panel_rect(y, height, width=None, padding=None):
+    """Helper to create a panel-relative rect respecting padding."""
+
+    pad = C.PANEL_PADDING if padding is None else padding
+    w = (C.PANEL_WIDTH if width is None else width) - 2 * pad
+    return pygame.Rect(pad, y, w, height)
+
 
 def draw_panel(screen, rect, title, font):
     pygame.draw.rect(screen, (20, 20, 20), rect)

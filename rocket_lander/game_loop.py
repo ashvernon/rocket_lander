@@ -17,6 +17,7 @@ from .hud import (
     draw_line_chart,
     draw_outcome_chart,
     draw_q_bars,
+    panel_rect,
     draw_target_vector,
     draw_velocity_vector,
 )
@@ -31,9 +32,11 @@ def run():
     set_torch_stability()
 
     pygame.init()
-    screen = pygame.display.set_mode((C.WIDTH, C.HEIGHT))
+    screen = pygame.display.set_mode((C.WINDOW_WIDTH, C.HEIGHT))
     clock = pygame.time.Clock()
     font = pygame.font.SysFont(None, 22)
+    world_surf = pygame.Surface((C.WIDTH, C.HEIGHT))
+    panel_surf = pygame.Surface((C.PANEL_WIDTH, C.HEIGHT))
 
     policy_net = DQN()
     target_net = DQN()
@@ -69,8 +72,10 @@ def run():
     replay_notice_timer = 0
 
     def render_scene(action_label, q_vals, is_showcase=False, replay_mode=False, notice_time=0, step_idx=0):
-        screen.fill((0, 0, 0))
-        terrain.draw(screen)
+        world_surf.fill((0, 0, 0))
+        panel_surf.fill((8, 8, 8))
+
+        terrain.draw(world_surf)
 
         ghost_run = None
         if not replay_mode and C.SHOW_GHOST:
@@ -84,19 +89,19 @@ def run():
                 ]
 
             if ghost_run.ghost_points:
-                draw_ghost_path(screen, ghost_run.ghost_points)
+                draw_ghost_path(world_surf, ghost_run.ghost_points)
                 if C.SHOW_GHOST_ROCKET:
                     idx = max(0, min(len(ghost_run.frames) - 1, step_idx))
-                    draw_ghost_rocket(screen, ghost_run.frames[idx])
+                    draw_ghost_rocket(world_surf, ghost_run.frames[idx])
 
         if not replay_mode:
-            effects.draw(screen)
-        lander.draw(screen)
+            effects.draw(world_surf)
+        lander.draw(world_surf)
 
         pad_center_x = (terrain.pad_x1 + terrain.pad_x2) / 2
         if C.SHOW_VELOCITY_VECTOR:
             draw_velocity_vector(
-                screen,
+                world_surf,
                 (lander.x, lander.y),
                 (lander.vx, lander.vy),
                 scale=C.VECTOR_SCALE,
@@ -105,7 +110,7 @@ def run():
 
         if C.SHOW_TARGET_VECTOR:
             draw_target_vector(
-                screen,
+                world_surf,
                 (lander.x, lander.y),
                 (pad_center_x, terrain.pad_y),
                 scale=C.VECTOR_SCALE,
@@ -114,48 +119,58 @@ def run():
 
         if not replay_mode and not lander.alive and not lander.landed:
             warn = font.render("OUT OF BOUNDS", True, (255, 80, 80))
-            screen.blit(warn, (C.WIDTH // 2 - warn.get_width() // 2, C.HEIGHT // 2))
+            world_surf.blit(warn, (C.WIDTH // 2 - warn.get_width() // 2, C.HEIGHT // 2))
 
-        base_x = C.WIDTH - C.HUD_PANEL_X_OFFSET
-        draw_line_chart(screen, pygame.Rect(base_x, 40, C.HUD_PANEL_W, 80), list(speed_hist), 0, 5, "Speed", font)
-        draw_line_chart(screen, pygame.Rect(base_x, 130, C.HUD_PANEL_W, 80), list(reward_hist), -3, 3, "Reward", font)
-        draw_line_chart(screen, pygame.Rect(base_x, 220, C.HUD_PANEL_W, 80), list(fuel_hist), 0, 1, "Fuel", font)
-        draw_outcome_chart(screen, pygame.Rect(base_x, 310, C.HUD_PANEL_W, 90), list(outcome_hist), font)
+        status = f"Ep {episode}  ε {eps_for_ep:.2f}  vx {lander.vx:.2f}  vy {lander.vy:.2f}  ang {lander.angle:.2f}"
+        txt = font.render(status, True, (255, 255, 255))
+        panel_y = C.PANEL_PADDING
+        panel_surf.blit(txt, (C.PANEL_PADDING, panel_y))
+        panel_y += txt.get_height() + 10
+
+        draw_line_chart(panel_surf, panel_rect(panel_y, 80), list(speed_hist), 0, 5, "Speed", font)
+        panel_y += 90
+        draw_line_chart(panel_surf, panel_rect(panel_y, 80), list(reward_hist), -3, 3, "Reward", font)
+        panel_y += 90
+        draw_line_chart(panel_surf, panel_rect(panel_y, 80), list(fuel_hist), 0, 1, "Fuel", font)
+        panel_y += 90
+        draw_outcome_chart(panel_surf, panel_rect(panel_y, 90), list(outcome_hist), font)
+        panel_y += 100
 
         if C.SHOW_ACTION_BADGE:
             draw_action_badge(
-                screen,
-                pygame.Rect(base_x, 410, C.HUD_PANEL_W, 60),
+                panel_surf,
+                panel_rect(panel_y, 60),
                 action_label,
                 font,
             )
+            panel_y += 70
 
         if C.SHOW_Q_BARS:
             draw_q_bars(
-                screen,
-                pygame.Rect(base_x, 475, C.HUD_PANEL_W, 100),
+                panel_surf,
+                panel_rect(panel_y, 100),
                 q_vals,
                 chosen_idx=C.ACTIONS.index(action_label) if action_label in C.ACTIONS else 0,
                 font=font,
             )
 
-        status = f"Ep {episode}  ε {eps_for_ep:.2f}  vx {lander.vx:.2f}  vy {lander.vy:.2f}  ang {lander.angle:.2f}"
-        txt = font.render(status, True, (255, 255, 255))
-        screen.blit(txt, (10, 10))
-
         if is_showcase:
             badge = font.render("SHOWCASE (ε=0)", True, (255, 255, 255))
-            screen.blit(badge, (10, 32))
-            pygame.draw.rect(screen, (255, 255, 255), pygame.Rect(3, 3, C.WIDTH - 6, C.HEIGHT - 6), 2)
+            world_surf.blit(badge, (10, 32))
+            pygame.draw.rect(world_surf, (255, 255, 255), pygame.Rect(3, 3, C.WIDTH - 6, C.HEIGHT - 6), 2)
 
         if replay_mode:
             replay_badge = font.render("REPLAY (slow-mo)", True, (255, 220, 0))
-            screen.blit(replay_badge, (10, 32))
-            pygame.draw.rect(screen, (255, 220, 0), pygame.Rect(3, 3, C.WIDTH - 6, C.HEIGHT - 6), 2)
+            world_surf.blit(replay_badge, (10, 32))
+            pygame.draw.rect(world_surf, (255, 220, 0), pygame.Rect(3, 3, C.WIDTH - 6, C.HEIGHT - 6), 2)
 
         if notice_time > 0:
             msg = font.render("No best run yet", True, (255, 120, 120))
-            screen.blit(msg, (C.WIDTH // 2 - msg.get_width() // 2, 60))
+            world_surf.blit(msg, (C.WIDTH // 2 - msg.get_width() // 2, 60))
+
+        screen.blit(world_surf, (0, 0))
+        screen.blit(panel_surf, (C.WIDTH, 0))
+        pygame.draw.line(screen, (90, 90, 90), (C.WIDTH, 0), (C.WIDTH, C.HEIGHT), 2)
 
         pygame.display.flip()
 
