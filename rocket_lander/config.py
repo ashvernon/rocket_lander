@@ -66,6 +66,10 @@ SHOW_ACTION_BADGE = True
 SHOW_TRAIL = True
 SHOW_PARTICLES = True
 
+# Replay
+ENABLE_REPLAY = True
+REPLAY_SLOWMO = 4  # frames to repeat per recorded frame
+
 # Showcase episodes
 SHOWCASE_EVERY = 20          # every N episodes run a showcase
 SHOWCASE_STEPS_CAP = 2500    # safety cap so showcase never hangs
